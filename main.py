@@ -8,6 +8,11 @@ import uuid
 import socketio
 from uvicorn import run
 from socketio import ASGIApp
+from starlette.applications import Starlette
+from starlette.routing import Route, Mount
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.middleware.cors import CORSMiddleware
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -73,6 +78,54 @@ async def message(sid, data):
     await sio.emit("message_sent", {"to_uuid": to_uuid}, to=sid)
 
 
+async def send_message_api(request: Request):
+    """HTTP POST endpoint to send a message to a user by UUID."""
+    try:
+        data = await request.json()
+    except Exception:
+        return JSONResponse(
+            {"success": False, "error": "Invalid JSON"},
+            status_code=400
+        )
+
+    recipient_uuid = data.get("recipientUuid")
+    message_text = data.get("messageText")
+    sender_name = data.get("senderName", "API")
+
+    if not recipient_uuid or not message_text:
+        return JSONResponse(
+            {"success": False, "error": "recipientUuid and messageText are required"},
+            status_code=400
+        )
+
+    # Validate UUID
+    try:
+        uuid.UUID(recipient_uuid)
+    except (ValueError, TypeError):
+        return JSONResponse(
+            {"success": False, "error": "Invalid recipientUuid"},
+            status_code=400
+        )
+
+    # Check if recipient is online
+    target_sid = users_by_uuid.get(recipient_uuid)
+    if not target_sid:
+        return JSONResponse(
+            {"success": False, "error": f"Recipient {recipient_uuid} is not online"},
+            status_code=404
+        )
+
+    # Send message
+    payload = {"from_uuid": sender_name, "text": message_text}
+    await sio.emit("message", payload, to=target_sid)
+
+    return JSONResponse({
+        "success": True,
+        "message": "Message sent successfully",
+        "recipientUuid": recipient_uuid
+    })
+
+
 async def run_client(my_uuid: str, peer_uuid: str, server_url: str = "http://localhost:8000"):
     """Console client: registers my_uuid, exchanges messages with peer_uuid."""
     client = socketio.AsyncClient()
@@ -125,8 +178,24 @@ if __name__ == "__main__":
             sys.exit(1)
         asyncio.run(run_client(my_uuid, peer_uuid, url))
     else:
-        app = ASGIApp(sio, static_files={
-            "/chat": "templates/chat.html",
-            "/static/socket.io.min.js": "static/socket.io.min.js",
-        })
+        # Create Starlette app with routes
+        routes = [
+            Route("/api/send-message", send_message_api, methods=["POST"]),
+            Mount("/", ASGIApp(sio, static_files={
+                "/chat": "templates/chat.html",
+                "/static/socket.io.min.js": "static/socket.io.min.js",
+            })),
+        ]
+
+        app = Starlette(routes=routes)
+
+        # Add CORS middleware
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=["*"],
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+
         run(app, host="0.0.0.0", port=8000)
