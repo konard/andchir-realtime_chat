@@ -2,9 +2,12 @@
 Text chat using python-socketio.
 Clients register their UUID and can exchange messages with a peer by their UUID.
 """
+import sys
 import asyncio
 import uuid
 import socketio
+from uvicorn import run
+from socketio import ASGIApp
 
 sio = socketio.AsyncServer(async_mode="asgi", cors_allowed_origins="*")
 
@@ -112,10 +115,6 @@ async def run_client(my_uuid: str, peer_uuid: str, server_url: str = "http://loc
 
 
 if __name__ == "__main__":
-    import sys
-    from uvicorn import run
-    from socketio import ASGIApp
-
     if len(sys.argv) >= 2 and sys.argv[1] == "--client":
         # python main.py --client <my_uuid> <peer_uuid> [url]
         my_uuid = sys.argv[2] if len(sys.argv) > 2 else str(uuid.uuid4())
